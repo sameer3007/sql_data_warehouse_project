@@ -1,0 +1,212 @@
+-- creating silver layer
+
+
+call silver.load_silver();
+
+delimiter $$
+create procedure silver.load_silver()
+begin
+	DROP TABLE IF EXISTS silver.crm_cust_info;
+	CREATE TABLE silver.crm_cust_info (
+		cst_id              INT,
+		cst_key             VARCHAR(50),
+		cst_firstname       VARCHAR(50),
+		cst_lastname        VARCHAR(50),
+		cst_marital_status  VARCHAR(50),
+		cst_gndr            VARCHAR(50),
+		cst_create_date     DATE,
+		dwh_create_date     datetime default now()
+	);
+
+	DROP TABLE IF EXISTS silver.crm_prd_info;
+	CREATE TABLE silver.crm_prd_info (
+		prd_id       INT,
+		cat_id		 varchar(50),
+		prd_key		 varchar(50),
+		prd_nm       VARCHAR(50),
+		prd_cost     INT,
+		prd_line     VARCHAR(50),
+		prd_start_dt DATE,
+		prd_end_dt   DATE,
+		dwh_create_date     datetime default now()
+	);
+
+	DROP TABLE IF EXISTS silver.crm_sales_details;
+	CREATE TABLE silver.crm_sales_details (
+		sls_ord_num  VARCHAR(50),
+		sls_prd_key  VARCHAR(50),
+		sls_cust_id  INT,
+		sls_order_dt date,
+		sls_ship_dt  date,
+		sls_due_dt   date,
+		sls_sales    INT,
+		sls_quantity INT,
+		sls_price    INT,
+		dwh_create_date     datetime default now()
+	);
+
+	DROP TABLE IF EXISTS silver.erp_loc_a101;
+	CREATE TABLE silver.erp_loc_a101 (
+		CID    VARCHAR(50),
+		CNTRY  VARCHAR(50),
+		dwh_create_date     datetime default now());
+		
+	DROP TABLE IF EXISTS silver.erp_cust_az12;
+	CREATE TABLE silver.erp_cust_az12 (
+		CID    VARCHAR(50),
+		BDATE  DATE,
+		GEN    VARCHAR(50),
+		dwh_create_date     datetime default now()
+	);
+
+	DROP TABLE IF EXISTS silver.erp_px_cat_g1v2;
+	CREATE TABLE silver.erp_px_cat_g1v2 (
+		ID           VARCHAR(50),
+		CAT          VARCHAR(50),
+		SUBCAT      VARCHAR(50),
+		MAINTENANCE  VARCHAR(50),
+		dwh_create_date     datetime default now()
+	);
+
+	-- --------------------------------------------------------------------
+	-- inserting into  silver layer
+	-- ---------------------------------------------------------------------
+	truncate table silver.crm_cust_info;
+	insert into silver.crm_cust_info(
+		cst_id,cst_key,
+		cst_firstname,
+		cst_lastname,
+		cst_marital_status,
+		cst_gndr,
+		cst_create_date)
+	SELECT 
+		cst_id,
+		cst_key,
+		TRIM(cst_firstname) AS cst_firstname,
+		TRIM(cst_lastname) AS cst_lastname,
+		CASE
+			WHEN upper(trim(cst_marital_status)) = 'S' THEN 'Single'
+			WHEN upper(trim(cst_marital_status)) = 'M' THEN 'Married'
+			ELSE 'N/A'
+		END AS cst_marital_status,
+		CASE
+			WHEN upper(trim(cst_gndr)) = 'F' THEN 'Female'
+			WHEN upper(trim(cst_gndr)) = 'M' THEN 'Male'
+			ELSE 'N/A'
+		END AS cst_gndr,
+		cst_create_date
+	FROM
+		bronze.crm_cust_info;
+		
+		
+	truncate table silver.crm_prd_info;
+	insert into silver.crm_prd_info(
+		prd_id,
+		cat_id,
+		prd_key,
+		prd_nm,
+		prd_cost,
+		prd_line,
+		prd_start_dt,
+		prd_end_dt)
+	SELECT 
+		prd_id,
+		REPLACE(SUBSTRING(prd_key, 1, 5),
+			'-',
+			'_') AS cat_id,
+		SUBSTRING(prd_key, 7, LENGTH(prd_key)) AS prd_key,
+		prd_nm,
+		IFNULL(prd_cost, 0) AS prd_cost,
+		CASE
+			WHEN UPPER(TRIM(prd_line)) = 'R' THEN 'Road'
+			WHEN UPPER(TRIM(prd_line)) = 'S' THEN 'Other Sales'
+			WHEN UPPER(TRIM(prd_line)) = 'M' THEN 'Mountain'
+			WHEN UPPER(TRIM(prd_line)) = 'T' THEN 'Touring'
+			ELSE 'N/A'
+		END AS prd_line,
+		cast(prd_start_dt as date) as prd_start_dt,
+		cast(lead(prd_start_dt,1) over(partition by prd_key order by prd_start_dt)- interval 1 day as date) as prd_end_dt
+	FROM
+		bronze.crm_prd_info;
+		
+
+	truncate table silver.crm_sales_details;
+	insert into silver.crm_sales_details(
+		sls_ord_num,
+		sls_prd_key,
+		sls_cust_id,
+		sls_order_dt,
+		sls_ship_dt,
+		sls_due_dt,
+		sls_sales,
+		sls_quantity,
+		sls_price)
+	SELECT 
+		sls_ord_num,
+		sls_prd_key,
+		sls_cust_id,
+		CASE
+			WHEN
+				sls_order_dt <= 0
+					OR LENGTH(sls_order_dt) != 8
+			THEN
+				NULL
+			ELSE CAST(CAST(sls_order_dt AS CHAR) AS DATE)
+		END AS sls_order_dt,
+		CAST(sls_ship_dt AS DATE) AS sls_ship_dt,
+		CAST(sls_due_dt AS DATE) AS sls_due_dt,
+		sls_sales,
+		sls_quantity,
+		sls_price
+	FROM
+		bronze.crm_sales_details;
+
+
+
+
+	truncate table silver.erp_cust_az12;
+	insert into silver.erp_cust_az12(
+		CID,
+		BDATE,
+		GEN)
+	SELECT 
+		CASE
+			WHEN CID LIKE 'NAS%' THEN SUBSTRING(CID, 4, LENGTH(CID))
+			ELSE CID
+		END AS CID,
+		CASE
+			WHEN BDATE > CURDATE() THEN NULL
+			ELSE BDATE
+		END AS BDATE,
+		CASE
+			WHEN upper(trim(GEN)) in("M","Male")  THEN 'Male'
+			WHEN upper(trim(GEN)) in("F","Female") THEN 'Female'
+			ELSE "N/A"
+		END AS GEN
+	FROM
+		bronze.erp_cust_az12;
+
+
+
+	truncate table silver.erp_loc_a101;
+	insert into silver.erp_loc_a101(CID,CNTRY)
+	SELECT 
+		REPLACE(CID, '-', '') AS CID,
+		case when trim(CNTRY) in('US','USA') then "United States"
+		when trim(CNTRY) = "DE" then "Germany"
+		when trim(CNTRY) is null or CNTRY = "" then "N/A"
+		else trim(CNTRY)
+		end as CNTRY
+	FROM
+		bronze.erp_loc_a101;
+
+
+
+
+	truncate table silver.erp_px_cat_g1v2;
+	insert into silver.erp_px_cat_g1v2(ID,CAT,SUBCAT,MAINTENANCE)
+	select * from bronze.erp_px_cat_g1v2;
+
+
+end $$
+delimiter ;
