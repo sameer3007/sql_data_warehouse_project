@@ -1,0 +1,70 @@
+- creating golden layer
+
+drop view if exists gold.dim_customers;
+create view gold.dim_customers as 
+SELECT row_number() over(order by ci.cst_id) as customer_key,
+    ci.cst_id AS customer_id,
+    ci.cst_key AS customer_number,
+    ci.cst_firstname AS first_name,
+    ci.cst_lastname AS last_name,
+    la.CNTRY as country,
+    cst_marital_status AS marital_status,
+    CASE
+        WHEN ci.cst_gndr != 'N/A' THEN ci.cst_gndr
+        ELSE COALESCE(ca.GEN, 'N/A')
+    END AS gender,
+    ca.BDATE as birth_date,
+    ci.cst_create_date as create_date
+    
+FROM
+    silver.crm_cust_info AS ci
+        INNER JOIN
+    silver.erp_cust_az12 AS ca ON ci.cst_key = ca.CId
+        INNER JOIN
+    silver.erp_loc_a101 AS la ON ci.cst_key = la.CID;
+ 
+ 
+ 
+drop view if exists gold.dim_products;
+create view gold.dim_products as
+SELECT 
+	row_number() over(order by pi.prd_start_dt,pi.prd_id) as product_key,
+    pi.prd_id as product_id,
+    pi.prd_key as product_number,
+    pi.prd_nm as product_name,
+    pi.cat_id as category_id,
+    pc.CAT as category,
+    pc.SUBCAT as sub_category,
+    pc.MAINTENANCE as maintenance,
+    pi.prd_cost as product_cost,
+    pi.prd_line as product_line,
+    pi.prd_start_dt
+FROM
+    silver.crm_prd_info AS pi
+        inner JOIN
+    silver.erp_px_cat_g1v2 AS pc ON pi.cat_id = pc.ID
+WHERE
+    pi.prd_end_dt is null;
+    
+    
+    
+
+
+drop view if exists gold.facts_sales;
+create view gold.facts_sales as
+    SELECT 
+    sd.sls_ord_num as order_number,
+    dp.product_key,
+    dc.customer_key,
+    sd.sls_order_dt as order_date,
+    sd.sls_ship_dt as shipping_date,
+    sd.sls_due_dt as due_date,
+    sd.sls_sales as sales,
+    sd.sls_quantity as quantity,
+    sd.sls_price as price
+FROM
+    silver.crm_sales_details AS sd
+        INNER JOIN
+    gold.dim_products AS dp ON sd.sls_prd_key = dp.product_number
+        INNER JOIN
+    gold.dim_customers AS dc ON sd.sls_cust_id = dc.customer_id;
